@@ -74,17 +74,17 @@ public final class ConnectionPoolTest {
 
     Route httpRoute = new Route(httpAddress, Proxy.NO_PROXY, httpSocketAddress, true);
     Route spdyRoute = new Route(spdyAddress, Proxy.NO_PROXY, spdySocketAddress, true);
-    httpA = new Connection(null, httpRoute);
+    httpA = new Connection(null, null, httpRoute);
     httpA.connect(200, 200, null);
-    httpB = new Connection(null, httpRoute);
+    httpB = new Connection(null, null, httpRoute);
     httpB.connect(200, 200, null);
-    httpC = new Connection(null, httpRoute);
+    httpC = new Connection(null, null, httpRoute);
     httpC.connect(200, 200, null);
-    httpD = new Connection(null, httpRoute);
+    httpD = new Connection(null, null, httpRoute);
     httpD.connect(200, 200, null);
-    httpE = new Connection(null, httpRoute);
+    httpE = new Connection(null, null, httpRoute);
     httpE.connect(200, 200, null);
-    spdyA = new Connection(null, spdyRoute);
+    spdyA = new Connection(null, null, spdyRoute);
     spdyA.connect(20000, 20000, null);
   }
 
@@ -106,7 +106,7 @@ public final class ConnectionPoolTest {
     assertNull(connection);
 
     connection = new Connection(
-        null, new Route(httpAddress, Proxy.NO_PROXY, httpSocketAddress, true));
+        null, null,new Route(httpAddress, Proxy.NO_PROXY, httpSocketAddress, true));
     connection.connect(200, 200, null);
     assertEquals(0, pool.getConnectionCount());
     pool.recycle(connection);

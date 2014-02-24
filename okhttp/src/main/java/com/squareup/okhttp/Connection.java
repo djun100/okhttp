@@ -67,6 +67,7 @@ import static java.net.HttpURLConnection.HTTP_PROXY_AUTH;
  */
 public final class Connection implements Closeable {
   private final ConnectionPool pool;
+  private final PushObserver pushObserver;
   private final Route route;
 
   private Socket socket;
@@ -81,8 +82,9 @@ public final class Connection implements Closeable {
   private long idleStartTimeNs;
   private Handshake handshake;
 
-  public Connection(ConnectionPool pool, Route route) {
+  public Connection(ConnectionPool pool, PushObserver pushObserver, Route route) {
     this.pool = pool;
+    this.pushObserver = pushObserver;
     this.route = route;
   }
 
@@ -165,6 +167,7 @@ public final class Connection implements Closeable {
     if (selectedProtocol.spdyVariant) {
       sslSocket.setSoTimeout(0); // SPDY timeouts are set per-stream.
       spdyConnection = new SpdyConnection.Builder(route.address.getUriHost(), true, source, sink)
+          .pushObserver(pushObserver)
           .protocol(selectedProtocol).build();
       spdyConnection.sendConnectionHeader();
     } else {

@@ -83,7 +83,7 @@ public final class RouteSelectorTest {
   @Test public void singleRoute() throws Exception {
     Address address = new Address(uriHost, uriPort, null, null, authenticator, null, protocols);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
 
     assertTrue(routeSelector.hasNext());
     dns.inetAddresses = makeFakeAddresses(255, 1);
@@ -102,14 +102,14 @@ public final class RouteSelectorTest {
   @Test public void singleRouteReturnsFailedRoute() throws Exception {
     Address address = new Address(uriHost, uriPort, null, null, authenticator, null, protocols);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
 
     assertTrue(routeSelector.hasNext());
     dns.inetAddresses = makeFakeAddresses(255, 1);
     Connection connection = routeSelector.next("GET");
     RouteDatabase routeDatabase = new RouteDatabase();
     routeDatabase.failed(connection.getRoute());
-    routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns, routeDatabase);
+    routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns, routeDatabase, null);
     assertConnection(routeSelector.next("GET"), address, NO_PROXY, dns.inetAddresses[0], uriPort,
         false);
     assertFalse(routeSelector.hasNext());
@@ -123,7 +123,7 @@ public final class RouteSelectorTest {
   @Test public void explicitProxyTriesThatProxiesAddressesOnly() throws Exception {
     Address address = new Address(uriHost, uriPort, null, null, authenticator, proxyA, protocols);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
 
     assertTrue(routeSelector.hasNext());
     dns.inetAddresses = makeFakeAddresses(255, 2);
@@ -141,7 +141,7 @@ public final class RouteSelectorTest {
     Address address = new Address(uriHost, uriPort, null, null, authenticator, NO_PROXY,
         protocols);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
 
     assertTrue(routeSelector.hasNext());
     dns.inetAddresses = makeFakeAddresses(255, 2);
@@ -160,7 +160,7 @@ public final class RouteSelectorTest {
 
     proxySelector.proxies = null;
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
     proxySelector.assertRequests(uri);
 
     assertTrue(routeSelector.hasNext());
@@ -175,7 +175,7 @@ public final class RouteSelectorTest {
   @Test public void proxySelectorReturnsNoProxies() throws Exception {
     Address address = new Address(uriHost, uriPort, null, null, authenticator, null, protocols);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
 
     assertTrue(routeSelector.hasNext());
     dns.inetAddresses = makeFakeAddresses(255, 2);
@@ -195,7 +195,7 @@ public final class RouteSelectorTest {
     proxySelector.proxies.add(proxyA);
     proxySelector.proxies.add(proxyB);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
     proxySelector.assertRequests(uri);
 
     // First try the IP addresses of the first proxy, in sequence.
@@ -229,7 +229,7 @@ public final class RouteSelectorTest {
 
     proxySelector.proxies.add(NO_PROXY);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
     proxySelector.assertRequests(uri);
 
     // Only the origin server will be attempted.
@@ -249,7 +249,7 @@ public final class RouteSelectorTest {
     proxySelector.proxies.add(proxyB);
     proxySelector.proxies.add(proxyA);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
     proxySelector.assertRequests(uri);
 
     assertTrue(routeSelector.hasNext());
@@ -288,7 +288,7 @@ public final class RouteSelectorTest {
         Proxy.NO_PROXY, protocols);
     RouteDatabase routeDatabase = new RouteDatabase();
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        routeDatabase);
+        routeDatabase, null);
 
     dns.inetAddresses = makeFakeAddresses(255, 1);
     Connection connection = routeSelector.next("GET");
@@ -302,7 +302,7 @@ public final class RouteSelectorTest {
         Proxy.NO_PROXY, protocols);
     RouteDatabase routeDatabase = new RouteDatabase();
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        routeDatabase);
+        routeDatabase, null);
 
     dns.inetAddresses = makeFakeAddresses(255, 1);
     Connection connection = routeSelector.next("GET");
@@ -317,7 +317,7 @@ public final class RouteSelectorTest {
     proxySelector.proxies.add(proxyA);
     proxySelector.proxies.add(proxyB);
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        new RouteDatabase());
+        new RouteDatabase(), null);
 
     // Proxy A
     dns.inetAddresses = makeFakeAddresses(255, 2);
@@ -364,7 +364,7 @@ public final class RouteSelectorTest {
 
     RouteDatabase routeDatabase = new RouteDatabase();
     RouteSelector routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns,
-        routeDatabase);
+        routeDatabase, null);
     dns.inetAddresses = makeFakeAddresses(255, 1);
 
     // Extract the regular sequence of routes from selector.
@@ -378,7 +378,7 @@ public final class RouteSelectorTest {
     // Add first regular route as failed.
     routeDatabase.failed(regularRoutes.get(0).getRoute());
     // Reset selector
-    routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns, routeDatabase);
+    routeSelector = new RouteSelector(address, uri, proxySelector, pool, dns, routeDatabase, null);
 
     List<Connection> routesWithFailedRoute = new ArrayList<Connection>();
     while (routeSelector.hasNext()) {

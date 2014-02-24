@@ -18,6 +18,7 @@ package com.squareup.okhttp.internal.http;
 import com.squareup.okhttp.Address;
 import com.squareup.okhttp.Connection;
 import com.squareup.okhttp.ConnectionPool;
+import com.squareup.okhttp.PushObserver;
 import com.squareup.okhttp.Route;
 import com.squareup.okhttp.RouteDatabase;
 import com.squareup.okhttp.internal.Dns;
@@ -56,6 +57,7 @@ public final class RouteSelector {
   private final ConnectionPool pool;
   private final Dns dns;
   private final RouteDatabase routeDatabase;
+  private final PushObserver pushObserver;
 
   /* The most recently attempted route. */
   private Proxy lastProxy;
@@ -78,13 +80,14 @@ public final class RouteSelector {
   private final List<Route> postponedRoutes;
 
   public RouteSelector(Address address, URI uri, ProxySelector proxySelector, ConnectionPool pool,
-      Dns dns, RouteDatabase routeDatabase) {
+      Dns dns, RouteDatabase routeDatabase, PushObserver pushObserver) {
     this.address = address;
     this.uri = uri;
     this.proxySelector = proxySelector;
     this.pool = pool;
     this.dns = dns;
     this.routeDatabase = routeDatabase;
+    this.pushObserver = pushObserver;
     this.postponedRoutes = new LinkedList<Route>();
 
     resetNextProxy(uri, address.getProxy());
@@ -117,7 +120,7 @@ public final class RouteSelector {
           if (!hasNextPostponed()) {
             throw new NoSuchElementException();
           }
-          return new Connection(pool, nextPostponed());
+          return new Connection(pool, pushObserver, nextPostponed());
         }
         lastProxy = nextProxy();
         resetNextInetSocketAddress(lastProxy);
@@ -135,7 +138,7 @@ public final class RouteSelector {
       return next(method);
     }
 
-    return new Connection(pool, route);
+    return new Connection(pool, pushObserver, route);
   }
 
   /**

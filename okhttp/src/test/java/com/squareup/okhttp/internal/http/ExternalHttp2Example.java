@@ -18,21 +18,29 @@ package com.squareup.okhttp.internal.http;
 
 import com.squareup.okhttp.OkHttpClient;
 import com.squareup.okhttp.Protocol;
+import com.squareup.okhttp.PushObserver;
+import com.squareup.okhttp.internal.spdy.ErrorCode;
+import com.squareup.okhttp.internal.spdy.Header;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.util.List;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSession;
+import okio.BufferedSource;
 
 import static com.squareup.okhttp.internal.http.OkHeaders.SELECTED_PROTOCOL;
 
 public final class ExternalHttp2Example {
   public static void main(String[] args) throws Exception {
-    URL url = new URL("https://twitter.com/");
-    HttpsURLConnection connection = (HttpsURLConnection) new OkHttpClient()
-        .setProtocols(Protocol.HTTP2_AND_HTTP_11).open(url);
+    OkHttpClient client = new OkHttpClient()
+        .setProtocols(Protocol.HTTP2_AND_HTTP_11)
+        .setPushObserver(PUSH_TO_CONSOLE);
+
+    URL url = new URL("https://http2.iijplus.jp/push/test1");
+    HttpsURLConnection connection = (HttpsURLConnection) client.open(url);
 
     connection.setHostnameVerifier(new HostnameVerifier() {
       @Override public boolean verify(String s, SSLSession sslSession) {
@@ -48,11 +56,37 @@ public final class ExternalHttp2Example {
     if (protocolValues != null && !protocolValues.isEmpty()) {
       System.out.println("PROTOCOL " + protocolValues.get(0));
     }
+
     BufferedReader reader =
         new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
     String line;
     while ((line = reader.readLine()) != null) {
       System.out.println(line);
     }
+    connection.disconnect();
   }
+
+  private static final PushObserver PUSH_TO_CONSOLE = new PushObserver() {
+    @Override public boolean onRequest(int streamId, List<Header> requestHeaders) {
+      System.out.printf("PUSH PROMISE[%s] >> %s%n", streamId, requestHeaders);
+      return false;
+    }
+
+    @Override
+    public boolean onHeaders(int streamId, List<Header> responseHeaders, boolean last) {
+      System.out.printf("PUSH PROMISE[%s] << %s%n", streamId, responseHeaders);
+      return false;
+    }
+
+    @Override
+    public boolean onData(int streamId, BufferedSource source, int length, boolean last)
+        throws IOException {
+      System.out.printf("PUSH PROMISE[%s] << %s%n", streamId, source.readByteString(length));
+      return false;
+    }
+
+    @Override public void onReset(int streamId, ErrorCode errorCode) {
+      System.out.printf("PUSH PROMISE[%s] << CANCELLED%n", streamId);
+    }
+  };
 }

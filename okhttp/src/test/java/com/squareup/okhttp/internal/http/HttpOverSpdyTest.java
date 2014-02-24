@@ -18,11 +18,15 @@ package com.squareup.okhttp.internal.http;
 import com.squareup.okhttp.HttpResponseCache;
 import com.squareup.okhttp.OkHttpClient;
 import com.squareup.okhttp.Protocol;
+import com.squareup.okhttp.PushObserver;
 import com.squareup.okhttp.internal.RecordingAuthenticator;
 import com.squareup.okhttp.internal.SslContextBuilder;
 import com.squareup.okhttp.internal.Util;
+import com.squareup.okhttp.internal.spdy.ErrorCode;
+import com.squareup.okhttp.internal.spdy.Header;
 import com.squareup.okhttp.mockwebserver.MockResponse;
 import com.squareup.okhttp.mockwebserver.MockWebServer;
+import com.squareup.okhttp.mockwebserver.PushPromise;
 import com.squareup.okhttp.mockwebserver.RecordedRequest;
 import com.squareup.okhttp.mockwebserver.SocketPolicy;
 import java.io.ByteArrayOutputStream;
@@ -43,10 +47,12 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPOutputStream;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSession;
+import okio.BufferedSource;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -54,6 +60,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -76,11 +83,11 @@ public abstract class HttpOverSpdyTest {
   };
 
   private static final SSLContext sslContext = SslContextBuilder.localhost();
-  protected final MockWebServer server = new MockWebServer();
-  protected final String hostName = server.getHostName();
-  protected final OkHttpClient client = new OkHttpClient();
-  protected HttpURLConnection connection;
-  protected HttpResponseCache cache;
+  private final MockWebServer server = new MockWebServer();
+  private final String hostName = server.getHostName();
+  private final OkHttpClient client = new OkHttpClient();
+  private HttpURLConnection connection;
+  private HttpResponseCache cache;
 
   @Before public void setUp() throws Exception {
     server.useHttps(sslContext.getSocketFactory(), false);
@@ -374,11 +381,11 @@ public abstract class HttpOverSpdyTest {
     assertContains(requestB.getHeaders(), "cookie: c=oreo");
   }
 
-  <T> void assertContains(Collection<T> collection, T value) {
+  private <T> void assertContains(Collection<T> collection, T value) {
     assertTrue(collection.toString(), collection.contains(value));
   }
 
-  void assertContent(String expected, HttpURLConnection connection, int limit)
+  private void assertContent(String expected, HttpURLConnection connection, int limit)
       throws IOException {
     connection.connect();
     assertEquals(expected, readAscii(connection.getInputStream(), limit));
@@ -413,7 +420,7 @@ public abstract class HttpOverSpdyTest {
     return bytesOut.toByteArray();
   }
 
-  class SpdyRequest implements Runnable {
+  private class SpdyRequest implements Runnable {
     String path;
     CountDownLatch countDownLatch;
     public SpdyRequest(String path, CountDownLatch countDownLatch) {
@@ -430,5 +437,123 @@ public abstract class HttpOverSpdyTest {
         throw new RuntimeException(e);
       }
     }
+  }
+
+  @Test public void serverSendsPushPromise_GET() throws Exception {
+    MockResponse response = new MockResponse().setBody("ABCDE").setStatus("HTTP/1.1 200 Sweet")
+        .withPush(new PushPromise("GET", "/foo/bar", Arrays.asList("foo: bar"),
+            new MockResponse().setBody("bar").setStatus("HTTP/1.1 200 Sweet")));
+    server.enqueue(response);
+    server.play();
+
+    final AtomicInteger callbacks = new AtomicInteger();
+    client.setPushObserver(new PushObserver() {
+
+      @Override public boolean onRequest(int streamId, List<Header> requestHeaders) {
+        assertEquals(2, streamId);
+        assertContains(requestHeaders, new Header(hostHeader, hostName));
+        assertContains(requestHeaders, new Header(Header.TARGET_METHOD, "GET"));
+        assertContains(requestHeaders, new Header(Header.TARGET_PATH, "/foo/bar"));
+        assertContains(requestHeaders, new Header("foo", "bar"));
+        callbacks.incrementAndGet();
+        return false;
+      }
+
+      @Override public boolean onHeaders(int streamId, List<Header> responseHeaders, boolean last) {
+        assertEquals(2, streamId);
+        assertContains(responseHeaders, new Header(Header.RESPONSE_STATUS, "200 Sweet"));
+        assertContains(responseHeaders, new Header("content-length", " 3"));
+        assertFalse(last);
+        callbacks.incrementAndGet();
+        return false;
+      }
+
+      @Override public boolean onData(int streamId, BufferedSource source, int length, boolean last)
+          throws IOException {
+        assertEquals(2, streamId);
+        assertEquals("bar", source.readUtf8(length));
+        assertTrue(last);
+        callbacks.incrementAndGet();
+        return false;
+      }
+
+      @Override public void onReset(int streamId, ErrorCode errorCode) {
+        callbacks.incrementAndGet();
+        fail();
+      }
+    });
+    connection = client.open(server.getUrl("/foo"));
+    assertContent("ABCDE", connection, Integer.MAX_VALUE);
+    assertEquals(200, connection.getResponseCode());
+    assertEquals("Sweet", connection.getResponseMessage());
+
+    RecordedRequest request = server.takeRequest();
+    assertEquals("GET /foo HTTP/1.1", request.getRequestLine());
+    assertContains(request.getHeaders(), ":scheme: https");
+    assertContains(request.getHeaders(), hostHeader + ": " + hostName + ":" + server.getPort());
+
+    RecordedRequest pushedRequest = server.takeRequest();
+    assertEquals("GET /foo/bar HTTP/1.1", pushedRequest.getRequestLine());
+    assertEquals(Arrays.asList("foo: bar"), pushedRequest.getHeaders());
+
+    assertEquals(3, callbacks.get());
+  }
+
+  @Test public void serverSendsPushPromise_HEAD() throws Exception {
+    MockResponse response = new MockResponse().setBody("ABCDE").setStatus("HTTP/1.1 200 Sweet")
+        .withPush(new PushPromise("HEAD", "/foo/bar", Arrays.asList("foo: bar"),
+            new MockResponse().setStatus("HTTP/1.1 204 Sweet")));
+    server.enqueue(response);
+    server.play();
+
+    final AtomicInteger callbacks = new AtomicInteger();
+    client.setPushObserver(new PushObserver() {
+
+      @Override public boolean onRequest(int streamId, List<Header> requestHeaders) {
+        assertEquals(2, streamId);
+        assertContains(requestHeaders, new Header(hostHeader, hostName));
+        assertContains(requestHeaders, new Header(Header.TARGET_METHOD, "HEAD"));
+        assertContains(requestHeaders, new Header(Header.TARGET_PATH, "/foo/bar"));
+        assertContains(requestHeaders, new Header("foo", "bar"));
+        callbacks.incrementAndGet();
+        return false;
+      }
+
+      @Override public boolean onHeaders(int streamId, List<Header> responseHeaders, boolean last) {
+        assertEquals(2, streamId);
+        assertContains(responseHeaders, new Header(Header.RESPONSE_STATUS, "204 Sweet"));
+        assertContains(responseHeaders, new Header("content-length", " 0"));
+        assertTrue(last);
+        callbacks.incrementAndGet();
+        return false;
+      }
+
+      @Override public boolean onData(int streamId, BufferedSource source, int length, boolean last)
+          throws IOException {
+        callbacks.incrementAndGet();
+        fail();
+        return false;
+      }
+
+      @Override public void onReset(int streamId, ErrorCode errorCode) {
+        callbacks.incrementAndGet();
+        fail();
+      }
+    });
+    connection = client.open(server.getUrl("/foo"));
+    assertContent("ABCDE", connection, Integer.MAX_VALUE);
+    assertEquals(200, connection.getResponseCode());
+    assertEquals("Sweet", connection.getResponseMessage());
+
+    RecordedRequest request = server.takeRequest();
+    assertEquals("GET /foo HTTP/1.1", request.getRequestLine());
+    assertContains(request.getHeaders(), ":scheme: https");
+    assertContains(request.getHeaders(), hostHeader + ": " + hostName + ":" + server.getPort());
+
+    RecordedRequest pushedRequest = server.takeRequest();
+    assertEquals("HEAD /foo/bar HTTP/1.1", pushedRequest.getRequestLine());
+    assertEquals(Arrays.asList("foo: bar"), pushedRequest.getHeaders());
+
+    assertEquals(2, callbacks.get());
   }
 }

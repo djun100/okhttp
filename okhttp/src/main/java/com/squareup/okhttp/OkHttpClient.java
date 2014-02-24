@@ -46,6 +46,7 @@ public final class OkHttpClient implements URLStreamHandlerFactory, Cloneable {
   private Dispatcher dispatcher;
   private Proxy proxy;
   private List<Protocol> protocols;
+  private PushObserver pushObserver;
   private ProxySelector proxySelector;
   private CookieHandler cookieHandler;
   private OkResponseCache responseCache;
@@ -157,6 +158,21 @@ public final class OkHttpClient implements URLStreamHandlerFactory, Cloneable {
 
   public CookieHandler getCookieHandler() {
     return cookieHandler;
+  }
+
+  /**
+   * Sets the observer that will process HTTP/2 push promises.
+   *
+   * <p>If unset, push promises will be
+   * {@link PushObserver#CANCEL cancelled}.
+   */
+  public OkHttpClient setPushObserver(PushObserver pushObserver) {
+    this.pushObserver = pushObserver;
+    return this;
+  }
+
+  public PushObserver getPushObserver() {
+    return pushObserver;
   }
 
   /**
@@ -453,6 +469,9 @@ public final class OkHttpClient implements URLStreamHandlerFactory, Cloneable {
    */
   OkHttpClient copyWithDefaults() {
     OkHttpClient result = clone();
+    if (result.pushObserver == null) {
+      result.pushObserver = PushObserver.CANCEL;
+    }
     if (result.proxySelector == null) {
       result.proxySelector = ProxySelector.getDefault();
     }

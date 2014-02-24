@@ -16,6 +16,7 @@
 package com.squareup.okhttp.internal.spdy;
 
 import com.squareup.okhttp.Protocol;
+import com.squareup.okhttp.PushObserver;
 import com.squareup.okhttp.internal.NamedRunnable;
 import com.squareup.okhttp.internal.Util;
 import java.io.Closeable;
@@ -83,6 +84,8 @@ public final class SpdyConnection implements Closeable {
 
   /** Lazily-created map of in-flight pings awaiting a response. Guarded by this. */
   private Map<Integer, Ping> pings;
+  /** User code to run in response to push promise events. */
+  private final PushObserver pushObserver;
   private int nextPingId;
 
   static final int INITIAL_WINDOW_SIZE = 65535;
@@ -123,6 +126,7 @@ public final class SpdyConnection implements Closeable {
 
   private SpdyConnection(Builder builder) {
     protocol = builder.protocol;
+    pushObserver = builder.pushObserver;
     client = builder.client;
     handler = builder.handler;
     nextStreamId = builder.client ? 1 : 2;
@@ -247,10 +251,11 @@ public final class SpdyConnection implements Closeable {
           setIdle(false);
         }
       }
-      if (associatedStreamId == 0) {
+      if (associatedStreamId == 0 || protocol == Protocol.SPDY_3) {
         frameWriter.synStream(outFinished, inFinished, streamId, associatedStreamId, priority, slot,
             requestHeaders);
-      } else {
+      } else { // HTTP/2 has a PUSH_PROMISE frame.
+        if (client) throw new IOException("Client attempted to push stream: " + associatedStreamId);
         frameWriter.pushPromise(associatedStreamId, streamId, requestHeaders);
       }
     }
@@ -491,6 +496,7 @@ public final class SpdyConnection implements Closeable {
     private BufferedSink sink;
     private IncomingStreamHandler handler = IncomingStreamHandler.REFUSE_INCOMING_STREAMS;
     private Protocol protocol = Protocol.SPDY_3;
+    private PushObserver pushObserver = PushObserver.CANCEL;
     private boolean client;
 
     public Builder(boolean client, Socket socket) throws IOException {
@@ -516,6 +522,11 @@ public final class SpdyConnection implements Closeable {
 
     public Builder protocol(Protocol protocol) {
       this.protocol = protocol;
+      return this;
+    }
+
+    public Builder pushObserver(PushObserver pushObserver) {
+      this.pushObserver = pushObserver;
       return this;
     }
 
@@ -557,6 +568,10 @@ public final class SpdyConnection implements Closeable {
 
     @Override public void data(boolean inFinished, int streamId, BufferedSource source, int length)
         throws IOException {
+      if (streamId != 0 && (streamId & 1) == 0) {
+        pushDataLater(streamId, source, length, inFinished);
+        return;
+      }
       SpdyStream dataStream = getStream(streamId);
       if (dataStream == null) {
         writeSynResetLater(streamId, ErrorCode.INVALID_STREAM);
@@ -572,6 +587,13 @@ public final class SpdyConnection implements Closeable {
     @Override public void headers(boolean outFinished, boolean inFinished, int streamId,
         int associatedStreamId, int priority, List<Header> headerBlock,
         HeadersMode headersMode) {
+      if (associatedStreamId > 0) { // SPDY/3 doesn't have a PUSH_PROMISE frame.
+        pushRequestLater(streamId, headerBlock);
+        return;
+      } else if (streamId != 0 && (streamId & 1) == 0) {
+        pushHeadersLater(streamId, headerBlock, inFinished);
+        return;
+      }
       SpdyStream stream;
       synchronized (SpdyConnection.this) {
         // If we're shutdown, don't bother with this stream.
@@ -623,6 +645,10 @@ public final class SpdyConnection implements Closeable {
     }
 
     @Override public void rstStream(int streamId, ErrorCode errorCode) {
+      if (streamId != 0 && (streamId & 1) == 0) {
+        pushObserver.onReset(streamId, errorCode);
+        return;
+      }
       SpdyStream rstStream = removeStream(streamId);
       if (rstStream != null) {
         rstStream.receiveRstStream(errorCode);
@@ -730,21 +756,47 @@ public final class SpdyConnection implements Closeable {
     }
 
     @Override
-    public void pushPromise(int streamId, int promisedStreamId, List<Header> requestHeaders)
-        throws IOException {
-      // TODO: Wire up properly and only cancel when local settings disable push.
-      cancelStreamLater(promisedStreamId);
+    public void pushPromise(int streamId, int promisedStreamId, List<Header> requestHeaders) {
+      pushRequestLater(promisedStreamId, requestHeaders);
     }
+  }
 
-    private void cancelStreamLater(final int streamId) {
-      executor.submit(new NamedRunnable("OkHttp %s Cancelling Stream %s", hostName, streamId) {
-        @Override public void execute() {
-          try {
-            frameWriter.rstStream(streamId, ErrorCode.CANCEL);
-          } catch (IOException ignored) {
-          }
+  private void pushRequestLater(final int streamId, final List<Header> requestHeaders) {
+    executor.submit(new NamedRunnable("OkHttp %s Push Request[%s]", hostName, streamId) {
+      @Override public void execute() {
+        try {
+          boolean cancel = pushObserver.onRequest(streamId, requestHeaders);
+          if (cancel) frameWriter.rstStream(streamId, ErrorCode.CANCEL);
+        } catch (IOException ignored) {
         }
-      });
-    }
+      }
+    });
+  }
+
+  private void pushHeadersLater(final int streamId, final List<Header> requestHeaders,
+      final boolean inFinished) {
+    executor.submit(new NamedRunnable("OkHttp %s Push Headers[%s]", hostName, streamId) {
+      @Override public void execute() {
+        try {
+          boolean cancel = pushObserver.onHeaders(streamId, requestHeaders, inFinished);
+          if (cancel) frameWriter.rstStream(streamId, ErrorCode.CANCEL);
+        } catch (IOException ignored) {
+        }
+      }
+    });
+  }
+
+  // TODO: ensure the data is read so that the stream isn't corrupted.
+  private void pushDataLater(final int streamId, final BufferedSource source, final int length,
+      final boolean inFinished) {
+    executor.submit(new NamedRunnable("OkHttp %s Push Data[%s]", hostName, streamId) {
+      @Override public void execute() {
+        try {
+          boolean cancel = pushObserver.onData(streamId, source, length, inFinished);
+          if (cancel) frameWriter.rstStream(streamId, ErrorCode.CANCEL);
+        } catch (IOException ignored) {
+        }
+      }
+    });
   }
 }

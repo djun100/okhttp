@@ -228,7 +228,8 @@ public class HttpEngine {
       Address address = new Address(uriHost, getEffectivePort(request.url()), sslSocketFactory,
           hostnameVerifier, client.getAuthenticator(), client.getProxy(), client.getProtocols());
       routeSelector = new RouteSelector(address, request.uri(), client.getProxySelector(),
-          client.getConnectionPool(), Dns.DEFAULT, client.getRoutesDatabase());
+          client.getConnectionPool(), Dns.DEFAULT, client.getRoutesDatabase(),
+          client.getPushObserver());
     }
 
     connection = routeSelector.next(request.method());
